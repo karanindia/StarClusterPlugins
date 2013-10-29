@@ -1,5 +1,3 @@
-import posixpath
-
 from starcluster import clustersetup, exception
 from starcluster.utils import print_timing
 from starcluster.logger import log
@@ -41,15 +39,15 @@ class NFSSharePlugin(clustersetup.DefaultClusterSetup):
 
         super(NFSSharePlugin, self).__init__(**kwargs)
 
-    def _mount_nfs_shares_on_node(self, node, server_node, nfs_mounts, nfs_mount_settings=None):
+    def _mount_nfs_shares_on_node(self, node, master, nfs_mounts, nfs_mount_settings=None):
         """
-        Mount each path in remote_paths from the remote server_node
+        Mount each path in remote_paths from the remote master
 
-        server_node - remote server node that is sharing the remote_paths
-        remote_paths - list of remote paths to mount from server_node
+        master - remote server node that is sharing the remote_paths
+        remote_paths - list of remote paths to mount from master
 
         @param node: the node object for which path is being mounted
-        @param server_node: the master node object
+        @param master: the master node object
         @param nfs_mounts: the nfs mount points {server_path: client_path}
         @param nfs_mount_settings: optional nfs mount settings
         @return:
@@ -62,7 +60,7 @@ class NFSSharePlugin(clustersetup.DefaultClusterSetup):
         mount_map = node.get_mount_map()
         mount_paths = []
         for path in nfs_mounts.keys():
-            network_device = "%s:%s" % (server_node.alias, path)
+            network_device = "%s:%s" % (master.alias, path)
             if network_device in mount_map:
                 mount_path, typ, options = mount_map.get(network_device)
                 log.debug('nfs share %s already mounted to %s on '
@@ -71,19 +69,18 @@ class NFSSharePlugin(clustersetup.DefaultClusterSetup):
             else:
                 mount_paths.append(path)
 
-        server_paths = map(lambda x: '%s:%s' % (server_node.alias,x), mount_paths)
-        server_paths_regex = '|'.join(map(lambda x: x.center(len(x) + 2),
-                                          server_paths))
+        server_paths = map(lambda x: '%s:%s ' % (master.alias,x), mount_paths)
+        server_paths_regex = '|'.join(server_paths)
         node.ssh.remove_lines_from_file('/etc/fstab', server_paths_regex)
-        fstab = node.ssh.remote_file('/etc/fstab', 'a')
 
         nfs_mount_settings = nfs_mount_settings or "vers=3,user,rw,exec,noauto"
 
+        fstab = node.ssh.remote_file('/etc/fstab', 'a')
         for path in mount_paths:
             fstab.write('%s:%s %s nfs %s 0 0\n' %
-                            (server_node.alias, path, nfs_mounts[path], nfs_mount_settings))
-
+                            (master.alias, path, nfs_mounts[path], nfs_mount_settings))
         fstab.close()
+
         for path in mount_paths:
             remote_path = nfs_mounts[path]
             if not node.ssh.path_exists(remote_path):
@@ -128,9 +125,9 @@ class NFSSharePlugin(clustersetup.DefaultClusterSetup):
         log.info("Configuring NFS exports path(s):\n%s" %
                  ' '.join(export_paths))
         nfs_export_settings = "(%s)" % nfs_export_settings or "(async,no_root_squash,no_subtree_check,rw)"
-        etc_exports = master.ssh.remote_file('/etc/exports', 'r')
-        contents = etc_exports.read()
-        etc_exports.close()
+
+        contents = master.ssh.get_remote_file_lines('/etc/exports')
+
         etc_exports = master.ssh.remote_file('/etc/exports', 'a')
         for node in nodes:
             for path in export_paths:
